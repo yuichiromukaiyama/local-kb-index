@@ -27,6 +27,10 @@ def create_app(root: str = ".", db: str | None = None):
         compact: bool = True
         content: str = "snippet"
         max_snippet_chars: int | None = 600
+        # Repository-relative path filters. `path` is an alias for include filters.
+        path: str | list[str] | None = None
+        include: list[str] | None = None
+        exclude: list[str] | None = None
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -39,7 +43,17 @@ def create_app(root: str = ".", db: str | None = None):
     @app.post("/query")
     def query_endpoint(req: QueryRequest) -> dict[str, Any]:
         try:
-            res = query(cfg, req.query, mode="vector", limit=req.limit, format_for_copilot=req.compact)
+            include_paths = _as_list(req.include) + _as_list(req.path)
+            exclude_paths = _as_list(req.exclude)
+            res = query(
+                cfg,
+                req.query,
+                mode="vector",
+                limit=req.limit,
+                format_for_copilot=req.compact,
+                include_paths=include_paths,
+                exclude_paths=exclude_paths,
+            )
             return results_to_json(
                 req.query,
                 res,
@@ -56,6 +70,14 @@ def create_app(root: str = ".", db: str | None = None):
         return sync(cfg).__dict__
 
     return app
+
+
+def _as_list(value: str | list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(item) for item in value if str(item).strip()]
 
 
 def run_server(root: str, db: str | None, host: str, port: int) -> None:

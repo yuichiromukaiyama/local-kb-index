@@ -75,6 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--copilot", action="store_true", help="Return compact JSON optimized for VS Code/Copilot tool output")
     sp.add_argument("--max-snippet-chars", type=int, default=None, help="Maximum snippet characters per result. Useful with --copilot.")
     sp.add_argument("--content", choices=["snippet", "none"], default="snippet", help="Result content detail. Use 'none' to return only path/range/score metadata.")
+    sp.add_argument("--path", action="append", dest="path_filters", default=[], help="Restrict results to a repository-relative file or directory path. Repeatable. Alias for --include.")
+    sp.add_argument("--include", action="append", default=[], help="Restrict results to a repository-relative glob, file, or directory. Repeatable, for example: src/** or docs/spec.")
+    sp.add_argument("--exclude", action="append", default=[], help="Exclude a repository-relative glob, file, or directory from results. Repeatable, for example: **/tests/**.")
 
     sp = sub.add_parser("status", help="Show index status and stale-file counts")
     common(sp)
@@ -135,7 +138,17 @@ def dispatch(args: argparse.Namespace) -> int:
         watch(cfg, once=args.once, on_sync=show)
         return 0
     if args.command == "query":
-        res = query(cfg, args.text, mode=args.mode, limit=args.limit, format_for_copilot=args.copilot)
+        include_paths = list(getattr(args, "include", []) or []) + list(getattr(args, "path_filters", []) or [])
+        exclude_paths = list(getattr(args, "exclude", []) or [])
+        res = query(
+            cfg,
+            args.text,
+            mode=args.mode,
+            limit=args.limit,
+            format_for_copilot=args.copilot,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+        )
         if args.format == "json" or args.copilot:
             max_snippet_chars = args.max_snippet_chars
             if args.copilot and max_snippet_chars is None:

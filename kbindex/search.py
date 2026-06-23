@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import fnmatch
 from typing import Any
 
 from .config import AppConfig
@@ -25,6 +26,82 @@ class SearchResult:
     snippet: str = ""
 
 
+@dataclass(frozen=True)
+class PathFilter:
+    """Repository-relative include/exclude glob filter for query results.
+
+    Patterns are intentionally evaluated against normalized repository-relative paths
+    stored in the index. Examples:
+
+      --path src              matches src/... and src exactly
+      --include docs/**       matches everything under docs
+      --include **/*.md       matches Markdown files anywhere
+      --exclude **/tests/**   excludes test directories
+
+    `--path` is a CLI alias for include patterns.
+    """
+
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+
+    @classmethod
+    def from_patterns(
+        cls,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+    ) -> "PathFilter":
+        return cls(
+            include=tuple(_normalize_path_pattern(p) for p in (include or []) if str(p).strip()),
+            exclude=tuple(_normalize_path_pattern(p) for p in (exclude or []) if str(p).strip()),
+        )
+
+    @property
+    def active(self) -> bool:
+        return bool(self.include or self.exclude)
+
+    def matches(self, path: str) -> bool:
+        normalized = _normalize_index_path(path)
+        if self.include and not any(_path_pattern_matches(normalized, pattern) for pattern in self.include):
+            return False
+        if self.exclude and any(_path_pattern_matches(normalized, pattern) for pattern in self.exclude):
+            return False
+        return True
+
+
+def _normalize_index_path(path: str) -> str:
+    path = str(path or "").replace("\\", "/").strip()
+    while path.startswith("./"):
+        path = path[2:]
+    return path.lstrip("/").rstrip("/")
+
+
+def _normalize_path_pattern(pattern: str) -> str:
+    pattern = _normalize_index_path(pattern)
+    if pattern.endswith("/"):
+        pattern = pattern.rstrip("/") + "/**"
+    return pattern
+
+
+def _has_glob(pattern: str) -> bool:
+    return any(ch in pattern for ch in "*?[")
+
+
+def _path_pattern_matches(path: str, pattern: str) -> bool:
+    if not pattern:
+        return True
+    if _has_glob(pattern):
+        if fnmatch.fnmatchcase(path, pattern):
+            return True
+        # Treat a directory-style glob like `src/**` as also matching `src`.
+        if pattern.endswith("/**") and path == pattern[:-3].rstrip("/"):
+            return True
+        return False
+
+    # Non-glob patterns are interpreted as an exact file path or a directory prefix.
+    base = pattern.rstrip("/")
+    return path == base or path.startswith(base + "/")
+
+
 def query(
     config: AppConfig,
     text: str,
@@ -32,6 +109,8 @@ def query(
     mode: str | None = None,
     limit: int | None = None,
     format_for_copilot: bool = False,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
 ) -> list[SearchResult]:
     """Search using vector retrieval only.
 
@@ -41,12 +120,15 @@ def query(
     """
     _normalize_mode(mode or config.search.default_mode)
     limit = limit or config.search.top_k
+    path_filter = PathFilter.from_patterns(include_paths, exclude_paths)
     db = MetadataDb(config)
     db.check_schema()
 
     expanded = expand_query(config, text)
     candidates: dict[str, SearchResult] = {}
-    for result in _vector_results(config, expanded, config.search.candidate_k):
+    for result in _vector_results(config, expanded, config.search.candidate_k, path_filter=path_filter):
+        if not path_filter.matches(result.path):
+            continue
         key = f"{result.path}:{result.start_line}:{result.end_line}"
         current = candidates.get(key)
         if current is None or result.score > current.score:
@@ -85,13 +167,29 @@ def expand_query(config: AppConfig, text: str) -> list[str]:
     return queries[:8]
 
 
-def _vector_results(config: AppConfig, queries: list[str], candidate_k: int) -> list[SearchResult]:
+def _vector_results(
+    config: AppConfig,
+    queries: list[str],
+    candidate_k: int,
+    *,
+    path_filter: "PathFilter",
+) -> list[SearchResult]:
     embedder = EmbeddingProvider(config)
     vector_store = VectorStore(config)
+
+    # Correctness is preferred over returning accidentally incomplete results.
+    # If a path filter is active, retrieve the full ranked vector list and apply the
+    # include/exclude filter locally. This guarantees that narrow directories are not
+    # missed because they fell outside the default candidate_k window.
+    # The unfiltered path remains fast and uses candidate_k as before.
+    search_limit = candidate_k
+    if path_filter.active:
+        search_limit = max(candidate_k, vector_store.count())
+
     out: list[SearchResult] = []
     for query_text in queries:
         query_vector = embedder.encode([query_text])[0]
-        rows = vector_store.vector_search(query_vector, candidate_k)
+        rows = vector_store.vector_search(query_vector, search_limit)
         out.extend(_rows_to_results(rows))
     return out
 
