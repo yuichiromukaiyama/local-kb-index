@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-kb-index"
+version = "1.0.0"
+description = "Production-oriented local knowledge base index and search CLI for VS Code/Copilot workflows without MCP."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Local KB" }]
+license = { text = "Internal/Private" }
+dependencies = [
+  "numpy>=1.24",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "lancedb>=0.13.0",
+  "pyarrow>=15.0.0",
+  "sentence-transformers>=3.0.0",
+  "watchfiles>=0.22.0",
+  "fastapi>=0.111.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+rerank = ["sentence-transformers>=3.0.0"]
+treesitter = ["tree-sitter>=0.21.0", "tree-sitter-languages>=1.10.2"]
+dev = ["pytest>=8.0", "ruff>=0.5.0", "mypy>=1.10.0"]
+
+[project.scripts]
+kb = "kbindex.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["kbindex*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
