@@ -6,14 +6,11 @@ import io
 import logging
 import os
 import struct
+import warnings
 from typing import Iterable, Iterator
 
 from .config import AppConfig
 from .errors import KbError
-
-import logging
-import os
-import warnings
 
 # Hugging Face Hub / transformers の標準出力を抑制
 os.environ.setdefault("HF_HUB_VERBOSITY", "error")
@@ -94,11 +91,15 @@ class EmbeddingProvider:
                 arr = self.model.encode(texts, **kwargs)
             return [[float(v) for v in row] for row in arr]
         except Exception as exc:
-            raise KbError("KB004", f"failed to embed text with model {self.config.embedding.model}: {exc}", cause=exc) from exc
+            raise KbError(
+                "KB004",
+                f"failed to embed text with model {self.config.embedding.model}: {exc}",
+                cause=exc,
+            ) from exc
 
     def dimension(self) -> int:
         try:
-            return int(self.model.get_sentence_embedding_dimension())
+            return int(self.model.get_embedding_dimension())
         except Exception:
             vec = self.encode(["dimension probe"])[0]
             return len(vec)
@@ -111,7 +112,9 @@ def _load_model(model_name: str, revision: str | None, local_files_only: bool, d
         with _quiet_external_output():
             from sentence_transformers import SentenceTransformer
     except Exception as exc:
-        raise KbError("KB014", "sentence-transformers is required for embeddings", cause=exc) from exc
+        raise KbError(
+            "KB014", "sentence-transformers is required for embeddings", cause=exc
+        ) from exc
     try:
         kwargs = {"local_files_only": local_files_only}
         if revision:
@@ -121,7 +124,11 @@ def _load_model(model_name: str, revision: str | None, local_files_only: bool, d
         with _quiet_external_output():
             return SentenceTransformer(model_name, **kwargs)
     except Exception as exc:
-        raise KbError("KB004", f"model={model_name}, revision={revision}, local_files_only={local_files_only}: {exc}", cause=exc) from exc
+        raise KbError(
+            "KB004",
+            f"model={model_name}, revision={revision}, local_files_only={local_files_only}: {exc}",
+            cause=exc,
+        ) from exc
 
 
 def _configure_quiet_external_libraries() -> None:
@@ -131,11 +138,13 @@ def _configure_quiet_external_libraries() -> None:
         logging.getLogger(logger_name).setLevel(logging.ERROR)
     try:
         from huggingface_hub.utils import disable_progress_bars
+
         disable_progress_bars()
     except Exception:
         pass
     try:
         from transformers.utils import logging as transformers_logging
+
         transformers_logging.set_verbosity_error()
         transformers_logging.disable_progress_bar()
     except Exception:
@@ -159,4 +168,4 @@ def _quiet_external_output() -> Iterator[None]:
 
 def batched(items: list[str], batch_size: int) -> Iterable[list[str]]:
     for i in range(0, len(items), batch_size):
-        yield items[i:i + batch_size]
+        yield items[i : i + batch_size]

@@ -1,119 +1,200 @@
 ---
 name: local-kb-search
-description: Use the local kb vector-search CLI to retrieve compact JSON evidence from the current macOS workspace before codebase investigation, design lookup, implementation planning, or impact analysis. Use this when repository context, design docs, source locations, or prior local knowledge are needed.
-license: internal-use
+description: Use the local kb vector-search command for repository semantic search from GitHub Copilot CLI, with optional repo-relative path filters. No MCP is required.
 ---
 
-# Local KB Search Skill
+# Local KB Search
 
-This skill teaches the agent how to use the local `kb` command as a read-oriented vector search layer for the current repository. The environment is macOS only. MCP must not be used.
+Use this skill when a task requires repository-aware semantic search, codebase investigation, impact analysis, design-document lookup, or simple local semantic search using the `kb` command.
 
-## Primary rule
+The local `kb` CLI must already be installed and available on `PATH`. This skill does not install `kb`, does not create embeddings by itself, and does not use MCP.
 
-Before answering codebase investigation, design lookup, implementation planning, refactoring, bug fixing, or impact-analysis questions, search the local KB index first unless the user has already supplied the exact file or the task is clearly independent of repository context.
+## Default search behavior
 
-Use compact output to minimize token usage:
+When investigating the repository, prefer local vector search before broad manual inspection.
+
+Default command form:
 
 ```bash
-kb query "<query>" --root . --db ./.kb_index --mode vector --copilot --content snippet --max-snippet-chars 600 -n 5
+kb query "<query>" \
+  --root . \
+  --db ./.kb_index \
+  --mode vector \
+  --copilot \
+  --content snippet \
+  --max-snippet-chars 600 \
+  -n 5
 ```
 
-For a first broad probe, use `--content none` when file locations alone are sufficient:
+The output is compact and intended for AI consumption.
+
+## Wrapper scripts
+
+When using the bundled wrapper scripts, prefer these forms.
+
+Search with snippets:
+
+```bash
+./skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet
+```
+
+Search file candidates only:
+
+```bash
+./skills/local-kb-search/scripts/kb-search-files.sh "<query>" . 8
+```
+
+If the skill is installed as a personal skill, the scripts are usually available at:
+
+```text
+~/.copilot/skills/local-kb-search/scripts/
+```
+
+If the skill is installed as a project skill, the scripts are usually available at:
+
+```text
+.github/skills/local-kb-search/scripts/
+```
+
+If the script path is unclear, use `kb query` directly.
+
+## Path-filtered search
+
+Use path filters when the user asks to search within a specific directory, submodule, documentation area, source tree, or file family.
+
+Examples of user intent that should trigger path filtering:
+
+- "Search only under src"
+- "Limit this to docs/spec"
+- "Look in backend only"
+- "Do not include tests"
+- "Find this in app/api but exclude generated files"
+
+Direct `kb query` path filter examples:
+
+```bash
+kb query "<query>" --root . --db ./.kb_index --mode vector --path "src" -n 5
+```
+
+```bash
+kb query "<query>" --root . --db ./.kb_index --mode vector --include "docs/spec/**" -n 5
+```
+
+```bash
+kb query "<query>" \
+  --root . \
+  --db ./.kb_index \
+  --mode vector \
+  --include "src/**" \
+  --exclude "**/tests/**" \
+  --copilot \
+  --content snippet \
+  --max-snippet-chars 600 \
+  -n 5
+```
+
+Wrapper path filter examples:
+
+```bash
+./skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet "src" "" ""
+```
+
+```bash
+./skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet "" "docs/spec/**" ""
+```
+
+```bash
+./skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet "" "src/**,docs/spec/**" "**/tests/**"
+```
+
+File-candidate-only path filter:
+
+```bash
+./skills/local-kb-search/scripts/kb-search-files.sh "<query>" . 8 "src" "" ""
+```
+
+## Path filter rules
+
+Treat path filter values as repository-relative paths or globs.
+
+- `--path "src"` means `src` and files under `src/`.
+- `--include "src/**"` includes files under `src`.
+- `--include "docs/spec/**"` includes design/spec documents.
+- `--exclude "**/tests/**"` excludes test directories.
+- Use multiple includes or excludes when the user names multiple areas.
+
+Do not change `--root` to a subdirectory only to filter results. Keep `--root .` for the repository root and use `--path`, `--include`, or `--exclude` for narrowing search scope.
+
+## Search result handling
+
+After search:
+
+1. Read the compact search results.
+2. Prefer the highest-scoring relevant file candidates.
+3. Inspect the actual files before making code changes.
+4. State when search results are insufficient or ambiguous.
+5. Use additional shell search only when local KB results are insufficient.
+
+For token efficiency, use file-candidate-only output first when the user asks for a broad search or when many results are likely:
 
 ```bash
 kb query "<query>" --root . --db ./.kb_index --mode vector --copilot --content none -n 8
 ```
 
-Then read only the relevant files and line ranges returned by the search result.
+Then retrieve snippets for narrower follow-up searches.
 
-## Preferred wrapper scripts
+## Safety policy
 
-When available, use the scripts in this skill directory rather than composing long commands manually.
+Read-oriented commands are safe for normal use:
 
-Personal skill installation path:
+- `kb query`
+- `kb status`
+- `kb doctor`
 
-```bash
-~/.copilot/skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet
+Do not run index mutation commands unless the user explicitly asks:
+
+- `kb sync`
+- `kb index`
+- `kb rebuild`
+- `kb rebuild --force`
+- `kb prune`
+
+If search results seem stale, tell the user that the index may need `kb sync`. Do not run `kb sync` automatically unless the user explicitly asks for index update.
+
+## Preferred query strategy
+
+Use natural-language and code-aware search phrases. Include domain terms, likely identifiers, and bilingual terms when helpful.
+
+Examples:
+
+```text
+SAS upload session signed URL
+runtime_config model response detail
+thread message search index
+permission resource_type principal_type
 ```
 
-Project skill installation path:
+For Japanese repositories or Japanese design docs, Japanese queries are acceptable:
 
-```bash
-.github/skills/local-kb-search/scripts/kb-search.sh "<query>" . 5 600 snippet
+```text
+署名付きURL 発行処理
+ファイルアップロード 完了検証
+権限チェック principal_type
 ```
-
-If the project path exists, prefer the project script. Otherwise use the personal script.
-
-## Script selection
-
-Use these scripts as follows:
-
-- `scripts/kb-search.sh`: normal compact vector search for evidence.
-- `scripts/kb-search-files.sh`: compact file-only search using `--content none`.
-- `scripts/kb-status.sh`: check index state.
-- `scripts/kb-doctor.sh`: diagnose missing or broken index.
-- `scripts/kb-sync.sh`: update the index only when the user explicitly asks to update/sync the index.
-- `scripts/kb-rebuild.sh`: rebuild only when the user explicitly asks or when `kb doctor` indicates rebuild is required.
-
-## Safety rules
-
-Do not run these commands unless the user explicitly asks:
-
-```bash
-kb sync
-kb rebuild
-kb index --force
-kb prune
-```
-
-Never run arbitrary user-provided shell fragments through these scripts. Treat the search query as data. Do not use `eval`.
-
-Do not use MCP. Do not attempt to start or configure MCP servers.
-
-## Retrieval policy
-
-1. Convert the user's request into one or more concise search queries.
-2. Run `kb-search.sh` or `kb-search-files.sh` from the repository root.
-3. Use only the compact JSON result as retrieval evidence.
-4. Read the returned files and line ranges before making code changes.
-5. If search returns no useful result, run a second query using synonyms or implementation terms.
-6. If still insufficient, fall back to normal file search tools such as `rg`, `find`, or direct file reads.
-
-## Query examples
-
-Japanese and English terms may both be useful.
-
-```bash
-~/.copilot/skills/local-kb-search/scripts/kb-search.sh "署名付きURL SAS upload session" . 5 600 snippet
-~/.copilot/skills/local-kb-search/scripts/kb-search.sh "permission access control recipe tool" . 5 600 snippet
-~/.copilot/skills/local-kb-search/scripts/kb-search-files.sh "runtime_config model response detail" . 8
-```
-
-## Expected output
-
-The wrapper returns compact JSON, for example:
-
-```json
-{"q":"検索処理","r":[{"p":"kbindex/search.py","l":"34-88","sc":0.8123,"s":"query","t":"..."}]}
-```
-
-Key meanings:
-
-- `q`: query
-- `r`: results
-- `p`: path
-- `l`: line range
-- `sc`: score
-- `s`: symbol or heading, if available
-- `t`: trimmed text snippet, omitted in file-only mode
 
 ## Failure handling
 
-If `.kb_index` is missing, run status or doctor and report that the index is not initialized. Do not create or rebuild the index unless the user asks.
+If `kb` is missing:
 
 ```bash
-~/.copilot/skills/local-kb-search/scripts/kb-status.sh .
-~/.copilot/skills/local-kb-search/scripts/kb-doctor.sh .
+command -v kb
 ```
 
-If `kb` is not found, tell the user that the CLI is not on `PATH` for the current shell.
+If index is missing or unhealthy:
+
+```bash
+kb status --root . --db ./.kb_index
+kb doctor --root . --db ./.kb_index
+```
+
+Report the problem and ask the user whether to initialize, sync, or rebuild the index. Do not perform mutation commands without explicit permission.

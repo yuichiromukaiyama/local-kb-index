@@ -1,32 +1,42 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=common.sh
-. "$SCRIPT_DIR/common.sh"
+source "$SCRIPT_DIR/common.sh"
 
-kb_require_macos
-kb_require_command
-kb_silent_env
+QUERY="${1:-}"
+ROOT_INPUT="${2:-.}"
+N="${3:-5}"
+SNIPPET="${4:-600}"
+CONTENT="${5:-snippet}"
+PATH_FILTER="${6:-}"
+INCLUDE_CSV="${7:-}"
+EXCLUDE_CSV="${8:-}"
 
-query="${1:-}"
-root_arg="${2:-.}"
-top_k="${3:-5}"
-max_snippet_chars="${4:-600}"
-content="${5:-snippet}"
-
-if [ -z "$query" ]; then
-  printf '%s\n' '{"error":"query is required"}' >&2
-  exit 2
+if [[ -z "$QUERY" ]]; then
+  kb_die "usage: kb-search.sh <query> [root] [n] [snippet_chars] [snippet|none] [path] [include_csv] [exclude_csv]"
 fi
 
-root="$(kb_abs_root "$root_arg")"
-db="$(kb_db_path "$root")"
+case "$CONTENT" in
+  snippet|none) ;;
+  *) kb_die "content must be 'snippet' or 'none': $CONTENT" ;;
+esac
 
-exec kb query "$query" \
-  --root "$root" \
-  --db "$db" \
+kb_require_command
+kb_configure_quiet_ml_env
+
+ROOT="$(kb_resolve_root "$ROOT_INPUT")"
+DB="$(kb_default_db "$ROOT")"
+
+kb_build_filter_args "$PATH_FILTER" "$INCLUDE_CSV" "$EXCLUDE_CSV"
+
+exec kb query "$QUERY" \
+  --root "$ROOT" \
+  --db "$DB" \
   --mode vector \
   --copilot \
-  --content "$content" \
-  --max-snippet-chars "$max_snippet_chars" \
-  -n "$top_k"
+  --content "$CONTENT" \
+  --max-snippet-chars "$SNIPPET" \
+  -n "$N" \
+  "${KB_FILTER_ARGS[@]}"
